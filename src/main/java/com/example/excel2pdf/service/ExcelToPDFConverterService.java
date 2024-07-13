@@ -6,10 +6,16 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.poi.hssf.usermodel.HSSFCellStyle;
+import org.apache.poi.hssf.usermodel.HSSFFont;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellAddress;
 import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFCellStyle;
 import org.apache.poi.xssf.usermodel.XSSFColor;
+import org.apache.poi.xssf.usermodel.XSSFFont;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -28,8 +34,9 @@ public class ExcelToPDFConverterService {
     private Map<String, Boolean> drawnBorders = new HashMap<>();
 
     public void convertExcelToPDF(File excelFile) throws IOException {
+        drawnBorders.clear();
         try (FileInputStream excelFileStream = new FileInputStream(excelFile);
-             Workbook workbook = new XSSFWorkbook(excelFileStream);
+             Workbook workbook = WorkbookFactory.create(excelFileStream);
              PDDocument pdfDocument = new PDDocument()) {
 
             PDType0Font customFont = PDType0Font.load(pdfDocument, new File(new ClassPathResource("fonts/NanumGothic.ttf").getURI()));
@@ -47,15 +54,16 @@ public class ExcelToPDFConverterService {
 
                     for (Row row : sheet) {
                         float xPosition = 20;
-                        float cellHeight= 0;
+                        float cellHeight = 0;
 
                         for (int cellIndex = 0; cellIndex < row.getLastCellNum(); cellIndex++) {
                             cellHeight = row.getHeightInPoints();
                             Cell cell = row.getCell(cellIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
                             CellAddress cellAddress = cell.getAddress();
+                            CellRangeAddress cellRange = null;
 
                             if (mergedCellsMap.containsKey(cellAddress)) {
-                                CellRangeAddress cellRange = mergedCellsMap.get(cellAddress);
+                                cellRange = mergedCellsMap.get(cellAddress);
 
                                 if (cellRange.getFirstRow() == cell.getRowIndex() && cellRange.getFirstColumn() == cell.getColumnIndex()) {
                                     float cellWidth = 0;
@@ -64,24 +72,28 @@ public class ExcelToPDFConverterService {
                                     }
                                     cellHeight = getMergedCellHeight(sheet, cellRange);
 
-                                    drawMergedCellContent(contentStream, sheet, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
+                                    drawMergedCellContent(contentStream, sheet, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
 
                                     for (int col = cellRange.getFirstColumn(); col <= cellRange.getLastColumn(); col++) {
                                         xPosition += getExcelCellWidthInPoints(sheet, col);
+                                        if (col > cellRange.getFirstColumn()) {
+                                            Cell currentCell = sheet.getRow(row.getRowNum()).getCell(col);
+                                            //drawCellBorders(contentStream, cellRange, currentCell, currentCell.getCellStyle(), xPosition, yPosition, getExcelCellWidthInPoints(sheet, col), cellHeight);
+                                        }
                                     }
 
                                     cellIndex = cellRange.getLastColumn();
                                 } else {
                                     float cellWidth = getExcelCellWidthInPoints(sheet, cellIndex);
 
-                                    drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
+                                    drawCellContent(contentStream, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
 
                                     xPosition += cellWidth;
                                 }
                             } else {
                                 float cellWidth = getExcelCellWidthInPoints(sheet, cellIndex);
 
-                                drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
+                                drawCellContent(contentStream, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
 
                                 xPosition += cellWidth;
                             }
@@ -94,7 +106,7 @@ public class ExcelToPDFConverterService {
         }
     }
 
-    private void drawMergedCellContent(PDPageContentStream contentStream, Sheet sheet, CellRangeAddress cellRange, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customBoldFont, Workbook workbook) throws IOException {
+    private void drawMergedCellContent(PDPageContentStream contentStream, Sheet sheet, CellRangeAddress cellRange, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customBoldFont, Workbook workbook, Map<CellAddress, CellRangeAddress> mergedCellsMap) throws IOException {
         CellStyle cellStyle = cell.getCellStyle();
         Font cellFont = workbook.getFontAt(cellStyle.getFontIndex());
         float fontSize = cellFont.getFontHeightInPoints();
@@ -106,7 +118,12 @@ public class ExcelToPDFConverterService {
             contentStream.fill();
         }
 
-        contentStream.setNonStrokingColor(Color.BLACK);
+        Color fontColor = getExcelCellFontColor(cell);
+        if (fontColor != null) {
+            contentStream.setNonStrokingColor(fontColor);
+        } else {
+            contentStream.setNonStrokingColor(Color.BLACK);
+        }
 
         if (cellFont.getBold()) {
             contentStream.setFont(customBoldFont, fontSize);
@@ -124,7 +141,7 @@ public class ExcelToPDFConverterService {
         }
 
         if (text.trim().isEmpty()) {
-            text = " ";
+            text = "";
         }
 
         String[] lines = text.split("\n");
@@ -135,10 +152,20 @@ public class ExcelToPDFConverterService {
         float currentYPosition = yPosition - fontSize - verticalOffset;
         for (String line : lines) {
             float adjustedXPosition = calculateAdjustedXPosition(xPosition, cellStyle, customFont, fontSize, line, cellWidth);
+
+            if (isCellUnderlined(cellStyle, workbook)) {
+                contentStream.setLineWidth(0.5f);
+                float underlineY = currentYPosition - fontSize * 0.1f;
+                contentStream.moveTo(adjustedXPosition, underlineY);
+                contentStream.lineTo(adjustedXPosition + customFont.getStringWidth(line) / 1000 * fontSize, underlineY);
+                contentStream.stroke();
+            }
+
             contentStream.beginText();
             contentStream.newLineAtOffset(adjustedXPosition, currentYPosition);
             contentStream.showText(line);
             contentStream.endText();
+
             currentYPosition -= fontSize * 1.2f;
         }
 
@@ -149,10 +176,10 @@ public class ExcelToPDFConverterService {
 
         xPosition += cellWidth;
 
-        drawCellBorders(contentStream, cellStyle, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
+        drawCellBorders(contentStream, cellRange, cell, cellStyle, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
     }
 
-    private void drawCellContent(PDPageContentStream contentStream, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook, Map<CellAddress, CellRangeAddress> mergedCellsMap) throws IOException {
+    private void drawCellContent(PDPageContentStream contentStream, CellRangeAddress cellRange, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook, Map<CellAddress, CellRangeAddress> mergedCellsMap) throws IOException {
         CellStyle cellStyle = cell.getCellStyle();
         Font cellFont = workbook.getFontAt(cellStyle.getFontIndex());
         float fontSize = cellFont.getFontHeightInPoints();
@@ -164,7 +191,13 @@ public class ExcelToPDFConverterService {
             contentStream.fill();
         }
 
-        contentStream.setNonStrokingColor(Color.BLACK);
+        Color fontColor = getExcelCellFontColor(cell);
+
+        if (fontColor != null) {
+            contentStream.setNonStrokingColor(fontColor);
+        } else {
+            contentStream.setNonStrokingColor(Color.BLACK);
+        }
 
         if (cellFont.getBold()) {
             contentStream.setFont(customFontBold, fontSize);
@@ -182,7 +215,7 @@ public class ExcelToPDFConverterService {
         }
 
         if (text.trim().isEmpty()) {
-            text = " ";
+            text = "";
         }
 
         String[] lines = text.split("\n");
@@ -193,10 +226,20 @@ public class ExcelToPDFConverterService {
         float currentYPosition = yPosition - fontSize - verticalOffset;
         for (String line : lines) {
             float adjustedXPosition = calculateAdjustedXPosition(xPosition, cellStyle, customFont, fontSize, line, cellWidth);
+
+            if (isCellUnderlined(cellStyle, workbook)) {
+                contentStream.setLineWidth(0.5f);
+                float underlineY = currentYPosition - fontSize * 0.1f;
+                contentStream.moveTo(adjustedXPosition, underlineY);
+                contentStream.lineTo(adjustedXPosition + customFont.getStringWidth(line) / 1000 * fontSize, underlineY);
+                contentStream.stroke();
+            }
+
             contentStream.beginText();
             contentStream.newLineAtOffset(adjustedXPosition, currentYPosition);
             contentStream.showText(line);
             contentStream.endText();
+
             currentYPosition -= fontSize * 1.2f;
         }
 
@@ -204,7 +247,45 @@ public class ExcelToPDFConverterService {
             return;
         }
 
-        drawCellBorders(contentStream, cellStyle, xPosition, yPosition, cellWidth, cellHeight);
+        drawCellBorders(contentStream, cellRange, cell, cellStyle, xPosition, yPosition, cellWidth, cellHeight);
+    }
+
+    private boolean isCellUnderlined(CellStyle cellStyle, Workbook workbook) {
+        Font font = workbook.getFontAt(cellStyle.getFontIndex());
+        return font.getUnderline() != Font.U_NONE;
+    }
+
+    private Color getExcelCellFontColor(Cell cell) {
+        Workbook workbook = cell.getSheet().getWorkbook();
+        CellStyle cellStyle = cell.getCellStyle();
+        short colorIndex = cellStyle.getFillForegroundColor();
+        Color color = null;
+
+        if (colorIndex != IndexedColors.AUTOMATIC.getIndex()) {
+            if (workbook instanceof XSSFWorkbook) {
+                XSSFFont xssfFont = ((XSSFCellStyle) cellStyle).getFont();
+                XSSFColor xssfColor = xssfFont.getXSSFColor();
+                if (xssfColor != null) {
+                    byte[] rgb = xssfColor.getRGB();
+                    if (rgb != null) {
+                        color = new Color((rgb[0] & 0xFF), (rgb[1] & 0xFF), (rgb[2] & 0xFF));
+                    }
+                }
+            } else if (workbook instanceof HSSFWorkbook) {
+                HSSFFont hssfFont = ((HSSFCellStyle) cellStyle).getFont(workbook);
+                HSSFColor hssfColor = hssfFont.getHSSFColor((HSSFWorkbook) workbook);
+                if (hssfColor != null) {
+                    short[] triplet = hssfColor.getTriplet();
+                    color = new Color(triplet[0], triplet[1], triplet[2]);
+                }
+            }
+        }
+
+        if (color == null) {
+            color = Color.BLACK;
+        }
+
+        return color;
     }
 
     private boolean isCellInMergedRange(Cell cell, Map<CellAddress, CellRangeAddress> mergedCellsMap) {
@@ -292,11 +373,12 @@ public class ExcelToPDFConverterService {
         }
     }
 
-    private void drawCellBorders(PDPageContentStream contentStream, CellStyle style, float xPosition, float yPosition, float cellWidth, float cellHeight) throws IOException {
+    private void drawCellBorders(PDPageContentStream contentStream, CellRangeAddress cellRange, Cell cell, CellStyle style, float xPosition, float yPosition, float cellWidth, float cellHeight) throws IOException {
         boolean drawTopBorder = style.getBorderTop() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellWidth, "top");
         boolean drawBottomBorder = style.getBorderBottom() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition - cellHeight, cellWidth, "bottom");
         boolean drawLeftBorder = style.getBorderLeft() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellHeight, "left");
         boolean drawRightBorder = style.getBorderRight() != BorderStyle.NONE && !isBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
+
 
         if (drawTopBorder) {
             contentStream.moveTo(xPosition, yPosition);
