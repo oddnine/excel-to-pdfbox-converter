@@ -47,9 +47,10 @@ public class ExcelToPDFConverterService {
 
                     for (Row row : sheet) {
                         float xPosition = 20;
-                        float cellHeight = row.getHeightInPoints();
+                        float cellHeight= 0;
 
                         for (int cellIndex = 0; cellIndex < row.getLastCellNum(); cellIndex++) {
+                            cellHeight = row.getHeightInPoints();
                             Cell cell = row.getCell(cellIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
                             CellAddress cellAddress = cell.getAddress();
 
@@ -343,6 +344,6 @@ public class ExcelToPDFConverterService {
 
     private float getExcelCellWidthInPoints(Sheet sheet, int columnIndex) {
         int widthUnits = sheet.getColumnWidth(columnIndex);
-        return widthUnits * 7.00174f / 256;
+        return widthUnits * 6f / 256;
     }
 }
