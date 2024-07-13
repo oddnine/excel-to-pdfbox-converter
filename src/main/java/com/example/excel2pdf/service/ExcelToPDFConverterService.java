@@ -25,6 +25,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ExcelToPDFConverterService {
 
+    private Map<String, Boolean> drawnBorders = new HashMap<>();
+
     public void convertExcelToPDF(File excelFile) throws IOException {
         try (FileInputStream excelFileStream = new FileInputStream(excelFile);
              Workbook workbook = new XSSFWorkbook(excelFileStream);
@@ -63,24 +65,22 @@ public class ExcelToPDFConverterService {
 
                                     drawMergedCellContent(contentStream, sheet, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
 
-                                    // 모든 병합된 셀에 대해 xPosition을 증가시킴
                                     for (int col = cellRange.getFirstColumn(); col <= cellRange.getLastColumn(); col++) {
                                         xPosition += getExcelCellWidthInPoints(sheet, col);
                                     }
 
-                                    // 병합된 셀의 마지막 열까지 건너뜀
                                     cellIndex = cellRange.getLastColumn();
                                 } else {
                                     float cellWidth = getExcelCellWidthInPoints(sheet, cellIndex);
 
-                                    drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
+                                    drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
 
                                     xPosition += cellWidth;
                                 }
                             } else {
                                 float cellWidth = getExcelCellWidthInPoints(sheet, cellIndex);
 
-                                drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
+                                drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook, mergedCellsMap);
 
                                 xPosition += cellWidth;
                             }
@@ -122,7 +122,6 @@ public class ExcelToPDFConverterService {
             text = getStringCellValue(cell);
         }
 
-        // Handle empty text with a space to avoid misplaced rows
         if (text.trim().isEmpty()) {
             text = " ";
         }
@@ -142,19 +141,17 @@ public class ExcelToPDFConverterService {
             currentYPosition -= fontSize * 1.2f;
         }
 
-        // Adjust position for cells that are below the merged area
         if (cellRange.getLastRow() > cell.getRowIndex()) {
             float heightDifference = getMergedCellHeight(sheet, cellRange) - cellHeight;
             yPosition -= heightDifference;
         }
 
-        // Move xPosition to the end of the merged region
         xPosition += cellWidth;
 
         drawCellBorders(contentStream, cellStyle, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
     }
 
-    private void drawCellContent(PDPageContentStream contentStream, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook) throws IOException {
+    private void drawCellContent(PDPageContentStream contentStream, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook, Map<CellAddress, CellRangeAddress> mergedCellsMap) throws IOException {
         CellStyle cellStyle = cell.getCellStyle();
         Font cellFont = workbook.getFontAt(cellStyle.getFontIndex());
         float fontSize = cellFont.getFontHeightInPoints();
@@ -183,7 +180,6 @@ public class ExcelToPDFConverterService {
             text = getStringCellValue(cell);
         }
 
-        // Handle empty text with a space to avoid misplaced rows
         if (text.trim().isEmpty()) {
             text = " ";
         }
@@ -203,7 +199,21 @@ public class ExcelToPDFConverterService {
             currentYPosition -= fontSize * 1.2f;
         }
 
+        if (isCellInMergedRange(cell, mergedCellsMap)) {
+            return;
+        }
+
         drawCellBorders(contentStream, cellStyle, xPosition, yPosition, cellWidth, cellHeight);
+    }
+
+    private boolean isCellInMergedRange(Cell cell, Map<CellAddress, CellRangeAddress> mergedCellsMap) {
+        for (Map.Entry<CellAddress, CellRangeAddress> entry : mergedCellsMap.entrySet()) {
+            CellRangeAddress range = entry.getValue();
+            if (range.isInRange(cell.getRowIndex(), cell.getColumnIndex())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String formatCellValue(CellValue cellValue) {
@@ -282,30 +292,48 @@ public class ExcelToPDFConverterService {
     }
 
     private void drawCellBorders(PDPageContentStream contentStream, CellStyle style, float xPosition, float yPosition, float cellWidth, float cellHeight) throws IOException {
+        boolean drawTopBorder = style.getBorderTop() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellWidth, "top");
+        boolean drawBottomBorder = style.getBorderBottom() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition - cellHeight, cellWidth, "bottom");
+        boolean drawLeftBorder = style.getBorderLeft() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellHeight, "left");
+        boolean drawRightBorder = style.getBorderRight() != BorderStyle.NONE && !isBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
 
-        if (style.getBorderTop() != BorderStyle.NONE) {
+        if (drawTopBorder) {
             contentStream.moveTo(xPosition, yPosition);
             contentStream.lineTo(xPosition + cellWidth, yPosition);
             contentStream.stroke();
+            markBorderDrawn(xPosition, yPosition, cellWidth, "top");
         }
 
-        if (style.getBorderBottom() != BorderStyle.NONE) {
+        if (drawBottomBorder) {
             contentStream.moveTo(xPosition, yPosition - cellHeight);
             contentStream.lineTo(xPosition + cellWidth, yPosition - cellHeight);
             contentStream.stroke();
+            markBorderDrawn(xPosition, yPosition - cellHeight, cellWidth, "bottom");
         }
 
-        if (style.getBorderLeft() != BorderStyle.NONE) {
+        if (drawLeftBorder) {
             contentStream.moveTo(xPosition, yPosition);
             contentStream.lineTo(xPosition, yPosition - cellHeight);
             contentStream.stroke();
+            markBorderDrawn(xPosition, yPosition, cellHeight, "left");
         }
 
-        if (style.getBorderRight() != BorderStyle.NONE) {
+        if (drawRightBorder) {
             contentStream.moveTo(xPosition + cellWidth, yPosition);
             contentStream.lineTo(xPosition + cellWidth, yPosition - cellHeight);
             contentStream.stroke();
+            markBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
         }
+    }
+
+    private boolean isBorderDrawn(float x, float y, float length, String direction) {
+        String key = direction + "_" + x + "_" + y;
+        return drawnBorders.getOrDefault(key, false);
+    }
+
+    private void markBorderDrawn(float x, float y, float length, String direction) {
+        String key = direction + "_" + x + "_" + y;
+        drawnBorders.put(key, true);
     }
 
     private String getStringCellValue(Cell cell) {

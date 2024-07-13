@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <title>Excel to PDF Converter</title>
+    <link rel="stylesheet" href="css/style.css" th:href="@{/css/style.css}"> <!-- Link to your CSS file -->
 </head>
 <body>
 <h1>Upload Excel File to Convert to PDF</h1>
+<!-- Display a message if present in the model -->
+<div th:if="${message}" th:text="${message}"></div>
 <form action="/convert-excel-to-pdf" method="post" enctype="multipart/form-data">
     <input type="file" name="file" required>
     <button type="submit">Convert to PDF</button>
