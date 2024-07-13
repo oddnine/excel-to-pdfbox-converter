@@ -63,7 +63,18 @@ public class ExcelToPDFConverterService {
 
                                     drawMergedCellContent(contentStream, sheet, cellRange, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
 
+                                    // 모든 병합된 셀에 대해 xPosition을 증가시킴
+                                    for (int col = cellRange.getFirstColumn(); col <= cellRange.getLastColumn(); col++) {
+                                        xPosition += getExcelCellWidthInPoints(sheet, col);
+                                    }
+
+                                    // 병합된 셀의 마지막 열까지 건너뜀
                                     cellIndex = cellRange.getLastColumn();
+                                } else {
+                                    float cellWidth = getExcelCellWidthInPoints(sheet, cellIndex);
+
+                                    drawCellContent(contentStream, cell, xPosition, yPosition, cellWidth, cellHeight, customFont, customFontBold, workbook);
+
                                     xPosition += cellWidth;
                                 }
                             } else {
@@ -97,12 +108,86 @@ public class ExcelToPDFConverterService {
         contentStream.setNonStrokingColor(Color.BLACK);
 
         if (cellFont.getBold()) {
-            contentStream.setFont(customFont, fontSize);
-        } else {
             contentStream.setFont(customBoldFont, fontSize);
+        } else {
+            contentStream.setFont(customFont, fontSize);
         }
 
-        String text = getStringCellValue(cell);
+        String text;
+        if (cell.getCellType() == CellType.FORMULA) {
+            FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+            CellValue cellValue = evaluator.evaluate(cell);
+            text = formatCellValue(cellValue);
+        } else {
+            text = getStringCellValue(cell);
+        }
+
+        // Handle empty text with a space to avoid misplaced rows
+        if (text.trim().isEmpty()) {
+            text = " ";
+        }
+
+        String[] lines = text.split("\n");
+        float totalTextHeight = lines.length * fontSize * 1.2f;
+
+        float verticalOffset = calculateVerticalOffset(cellStyle, cellHeight, totalTextHeight, fontSize);
+
+        float currentYPosition = yPosition - fontSize - verticalOffset;
+        for (String line : lines) {
+            float adjustedXPosition = calculateAdjustedXPosition(xPosition, cellStyle, customFont, fontSize, line, cellWidth);
+            contentStream.beginText();
+            contentStream.newLineAtOffset(adjustedXPosition, currentYPosition);
+            contentStream.showText(line);
+            contentStream.endText();
+            currentYPosition -= fontSize * 1.2f;
+        }
+
+        // Adjust position for cells that are below the merged area
+        if (cellRange.getLastRow() > cell.getRowIndex()) {
+            float heightDifference = getMergedCellHeight(sheet, cellRange) - cellHeight;
+            yPosition -= heightDifference;
+        }
+
+        // Move xPosition to the end of the merged region
+        xPosition += cellWidth;
+
+        drawCellBorders(contentStream, cellStyle, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
+    }
+
+    private void drawCellContent(PDPageContentStream contentStream, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook) throws IOException {
+        CellStyle cellStyle = cell.getCellStyle();
+        Font cellFont = workbook.getFontAt(cellStyle.getFontIndex());
+        float fontSize = cellFont.getFontHeightInPoints();
+
+        Color bgColor = getExcelCellBackgroundColor(cellStyle);
+        if (bgColor != null) {
+            contentStream.setNonStrokingColor(bgColor);
+            contentStream.addRect(xPosition, yPosition - cellHeight, cellWidth, cellHeight);
+            contentStream.fill();
+        }
+
+        contentStream.setNonStrokingColor(Color.BLACK);
+
+        if (cellFont.getBold()) {
+            contentStream.setFont(customFontBold, fontSize);
+        } else {
+            contentStream.setFont(customFont, fontSize);
+        }
+
+        String text;
+        if (cell.getCellType() == CellType.FORMULA) {
+            FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+            CellValue cellValue = evaluator.evaluate(cell);
+            text = formatCellValue(cellValue);
+        } else {
+            text = getStringCellValue(cell);
+        }
+
+        // Handle empty text with a space to avoid misplaced rows
+        if (text.trim().isEmpty()) {
+            text = " ";
+        }
+
         String[] lines = text.split("\n");
         float totalTextHeight = lines.length * fontSize * 1.2f;
 
@@ -121,43 +206,17 @@ public class ExcelToPDFConverterService {
         drawCellBorders(contentStream, cellStyle, xPosition, yPosition, cellWidth, cellHeight);
     }
 
-    private void drawCellContent(PDPageContentStream contentStream, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook) throws IOException {
-        CellStyle cellStyle = cell.getCellStyle();
-        Font cellFont = workbook.getFontAt(cellStyle.getFontIndex());
-        float fontSize = cellFont.getFontHeightInPoints();
-
-        Color bgColor = getExcelCellBackgroundColor(cellStyle);
-        if (bgColor != null) {
-            contentStream.setNonStrokingColor(bgColor);
-            contentStream.addRect(xPosition, yPosition - cellHeight, cellWidth, cellHeight);
-            contentStream.fill();
+    private String formatCellValue(CellValue cellValue) {
+        switch (cellValue.getCellType()) {
+            case STRING:
+                return cellValue.getStringValue();
+            case NUMERIC:
+                return String.valueOf(cellValue.getNumberValue());
+            case BOOLEAN:
+                return String.valueOf(cellValue.getBooleanValue());
+            default:
+                return "";
         }
-
-        contentStream.setNonStrokingColor(Color.BLACK);
-
-        if (cellFont.getBold()) {
-            contentStream.setFont(customFont, fontSize);
-        } else {
-            contentStream.setFont(customFontBold, fontSize);
-        }
-
-        String text = getStringCellValue(cell);
-        String[] lines = text.split("\n");
-        float totalTextHeight = lines.length * fontSize * 1.2f;
-
-        float verticalOffset = calculateVerticalOffset(cellStyle, cellHeight, totalTextHeight, fontSize);
-
-        float currentYPosition = yPosition - fontSize - verticalOffset;
-        for (String line : lines) {
-            float adjustedXPosition = calculateAdjustedXPosition(xPosition, cellStyle, customFont, fontSize, line, cellWidth);
-            contentStream.beginText();
-            contentStream.newLineAtOffset(adjustedXPosition, currentYPosition);
-            contentStream.showText(line);
-            contentStream.endText();
-            currentYPosition -= fontSize * 1.2f;
-        }
-
-        drawCellBorders(contentStream, cellStyle, xPosition, yPosition, cellWidth, cellHeight);
     }
 
     private Map<CellAddress, CellRangeAddress> getMergedCellsMap(Sheet sheet) {
