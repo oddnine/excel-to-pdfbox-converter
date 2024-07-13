@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: demo
+    thymeleaf:
+        cache: false
+        prefix: classpath:/templates/

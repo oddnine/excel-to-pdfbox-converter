@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Excel to PDF Converter</title>
+</head>
+<body>
+<h1>Upload Excel File to Convert to PDF</h1>
+<form action="/convert-excel-to-pdf" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button type="submit">Convert to PDF</button>
+</form>
+</body>
+</html>
