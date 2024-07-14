@@ -24,7 +24,9 @@ import java.awt.Color;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -76,10 +78,6 @@ public class ExcelToPDFConverterService {
 
                                     for (int col = cellRange.getFirstColumn(); col <= cellRange.getLastColumn(); col++) {
                                         xPosition += getExcelCellWidthInPoints(sheet, col);
-                                        if (col > cellRange.getFirstColumn()) {
-                                            Cell currentCell = sheet.getRow(row.getRowNum()).getCell(col);
-                                            //drawCellBorders(contentStream, cellRange, currentCell, currentCell.getCellStyle(), xPosition, yPosition, getExcelCellWidthInPoints(sheet, col), cellHeight);
-                                        }
                                     }
 
                                     cellIndex = cellRange.getLastColumn();
@@ -176,7 +174,7 @@ public class ExcelToPDFConverterService {
 
         xPosition += cellWidth;
 
-        drawCellBorders(contentStream, cellRange, cell, cellStyle, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
+        drawMergedCellBorders(contentStream, sheet, cellRange, xPosition - cellWidth, yPosition, cellWidth, cellHeight);
     }
 
     private void drawCellContent(PDPageContentStream contentStream, CellRangeAddress cellRange, Cell cell, float xPosition, float yPosition, float cellWidth, float cellHeight, PDType0Font customFont, PDType0Font customFontBold, Workbook workbook, Map<CellAddress, CellRangeAddress> mergedCellsMap) throws IOException {
@@ -379,7 +377,6 @@ public class ExcelToPDFConverterService {
         boolean drawLeftBorder = style.getBorderLeft() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellHeight, "left");
         boolean drawRightBorder = style.getBorderRight() != BorderStyle.NONE && !isBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
 
-
         if (drawTopBorder) {
             contentStream.moveTo(xPosition, yPosition);
             contentStream.lineTo(xPosition + cellWidth, yPosition);
@@ -407,6 +404,73 @@ public class ExcelToPDFConverterService {
             contentStream.stroke();
             markBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
         }
+    }
+
+    private void drawMergedCellBorders(PDPageContentStream contentStream, Sheet sheet, CellRangeAddress cellRange, float xPosition, float yPosition, float cellWidth, float cellHeight) throws IOException {
+        List<Cell> cornerCells = new ArrayList<>();
+
+        Cell topLeftCell = getCell(sheet, cellRange.getFirstRow(), cellRange.getFirstColumn());
+        // Top-right corner
+        Cell topRightCell = getCell(sheet, cellRange.getFirstRow(), cellRange.getLastColumn());
+        // Bottom-left corner
+        Cell bottomLeftCell = getCell(sheet, cellRange.getLastRow(), cellRange.getFirstColumn());
+        // Bottom-right corner
+        Cell bottomRightCell = getCell(sheet, cellRange.getLastRow(), cellRange.getLastColumn());
+
+        // Add cells to the list
+        cornerCells.add(topLeftCell);
+        cornerCells.add(topRightCell);
+        cornerCells.add(bottomLeftCell);
+        cornerCells.add(bottomRightCell);
+
+        // Print the corner cells
+        for (Cell cell : cornerCells) {
+            CellStyle style = cell.getCellStyle();
+            boolean drawTopBorder = style.getBorderTop() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellWidth, "top");
+            boolean drawBottomBorder = style.getBorderBottom() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition - cellHeight, cellWidth, "bottom");
+            boolean drawLeftBorder = style.getBorderLeft() != BorderStyle.NONE && !isBorderDrawn(xPosition, yPosition, cellHeight, "left");
+            boolean drawRightBorder = style.getBorderRight() != BorderStyle.NONE && !isBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
+
+            if (drawTopBorder) {
+                contentStream.moveTo(xPosition, yPosition);
+                contentStream.lineTo(xPosition + cellWidth, yPosition);
+                contentStream.stroke();
+                markBorderDrawn(xPosition, yPosition, cellWidth, "top");
+            }
+
+            if (drawBottomBorder) {
+                contentStream.moveTo(xPosition, yPosition - cellHeight);
+                contentStream.lineTo(xPosition + cellWidth, yPosition - cellHeight);
+                contentStream.stroke();
+                markBorderDrawn(xPosition, yPosition - cellHeight, cellWidth, "bottom");
+            }
+
+            if (drawLeftBorder) {
+                contentStream.moveTo(xPosition, yPosition);
+                contentStream.lineTo(xPosition, yPosition - cellHeight);
+                contentStream.stroke();
+                markBorderDrawn(xPosition, yPosition, cellHeight, "left");
+            }
+
+            if (drawRightBorder) {
+                contentStream.moveTo(xPosition + cellWidth, yPosition);
+                contentStream.lineTo(xPosition + cellWidth, yPosition - cellHeight);
+                contentStream.stroke();
+                markBorderDrawn(xPosition + cellWidth, yPosition, cellHeight, "right");
+            }
+        }
+    }
+
+    private static Cell getCell(Sheet sheet, int rowIndex, int colIndex) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) {
+            row = sheet.createRow(rowIndex);
+        }
+        Cell cell = row.getCell(colIndex);
+        if (cell == null) {
+            cell = row.createCell(colIndex);
+        }
+        return cell;
     }
 
     private boolean isBorderDrawn(float x, float y, float length, String direction) {
